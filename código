@@ -1,0 +1,159 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+// ============================================================
+// ÁREA DE CONFIGURAÇÃO
+// ============================================================
+
+const char* ssid = "MARFIM_CEARA";
+const char* password = "marfimm0403";
+
+// SEU LINK DO GOOGLE SCRIPT
+String GoogleScriptURL = "https://script.google.com/macros/s/AKfycbxVmKlluR2baMbRtPfi_99133WGhmcbtcoOk1pOufEKjYpbpe0xh1cn-EIWJcy2b8sonQ/exec"; 
+
+// ============================================================
+// CONFIGURAÇÃO DAS MÁQUINAS
+// ============================================================
+const int qtdMaquinas = 4;
+
+String nomes[qtdMaquinas] = {
+  "ESPULADEIRA CHINESA 2 BOCAS", 
+  "ESPULADEIRA TORRE 2 BOCAS", 
+  "ESPULADEIRA TORRE 4 BOCAS", 
+  "ESPULADEIRA LONGO 2 BOCAS"
+};
+
+int pinos[qtdMaquinas] = {27, 26, 25, 33};
+
+// ============================================================
+// VARIÁVEIS DO SISTEMA
+// ============================================================
+int estadoAnterior[qtdMaquinas];
+unsigned long tempoInicio[qtdMaquinas];
+WebServer server(80);
+
+// ============================================================
+// FUNÇÃO DE ENVIO
+// ============================================================
+void enviarParaGoogle(String nomeMq, String evento, float tempoSegundos) {
+  if(WiFi.status() == WL_CONNECTED){
+    
+    WiFiClientSecure client; 
+    client.setInsecure();    
+    HTTPClient http;
+    
+    nomeMq.replace(" ", "%20");
+    evento.replace(" ", "%20"); // Ajusta espaço no evento também
+    
+    String urlFinal = GoogleScriptURL + "?maquina=" + nomeMq + "&evento=" + evento + "&duracao=" + String(tempoSegundos);
+    
+    Serial.print("Enviando: " + nomeMq + "... ");
+    
+    http.begin(client, urlFinal); 
+    int httpCode = http.GET();
+    
+    if (httpCode > 0) {
+      Serial.println("Sucesso!");
+    } else {
+      Serial.println("Falha: " + http.errorToString(httpCode));
+    }
+    http.end();
+  }
+}
+
+// Página Web Local
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<meta http-equiv='refresh' content='10'>";
+  html += "<style>body{font-family:Helvetica;text-align:center;margin:10px;background:#eee}";
+  html += ".card{background:#fff;padding:15px;margin:10px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}";
+  html += "h3{margin:5px 0;font-size:16px;color:#333} .status{font-weight:bold;font-size:18px}";
+  html += "</style></head><body><h2>Painel Espuladeiras</h2>";
+  
+  for(int i=0; i < qtdMaquinas; i++) {
+    int leitura = digitalRead(pinos[i]);
+    String status, cor;
+    
+    if(leitura == LOW) { 
+      status = "RODANDO"; 
+      cor = "green";
+    } else {
+      status = "PARADA"; 
+      cor = "red";
+    }
+    
+    unsigned long tempoAgora = (millis() - tempoInicio[i]) / 1000;
+    String tempoFmt = String(tempoAgora / 3600) + "h " + String((tempoAgora % 3600) / 60) + "m";
+
+    html += "<div class='card'><h3>" + nomes[i] + "</h3>";
+    html += "<div class='status' style='color:" + cor + "'>" + status + "</div>";
+    html += "<small>Tempo atual: " + tempoFmt + "</small></div>";
+  }
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  for(int i=0; i < qtdMaquinas; i++) {
+    pinMode(pinos[i], INPUT_PULLUP);
+    estadoAnterior[i] = digitalRead(pinos[i]);
+    tempoInicio[i] = millis();
+  }
+
+  Serial.print("Conectando a " + String(ssid));
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConectado! IP: " + WiFi.localIP().toString());
+
+  server.on("/", handleRoot);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+
+  for(int i=0; i < qtdMaquinas; i++) {
+    int leituraAtual = digitalRead(pinos[i]);
+
+    if (leituraAtual != estadoAnterior[i]) {
+      delay(50); 
+      if (digitalRead(pinos[i]) == leituraAtual) {
+        
+        unsigned long tempoAgora = millis();
+        float tempoSegundos = (tempoAgora - tempoInicio[i]) / 1000.0;
+        
+        String etiqueta;
+        
+        // LÓGICA NOVA MAIS CLARA:
+        if (estadoAnterior[i] == LOW) { 
+          // Estava LOW (Rodando) e agora parou.
+          // O tempo que passou refere-se à produção.
+          etiqueta = "TEMPO PRODUZINDO"; 
+          Serial.println(nomes[i] + " -> Parou. Registrando Produção.");
+          
+        } else {
+          // Estava HIGH (Parada) e agora ligou.
+          // O tempo que passou refere-se à ociosidade.
+          etiqueta = "TEMPO PARADA"; 
+          Serial.println(nomes[i] + " -> Ligou. Registrando Parada.");
+        }
+
+        // Envia para a planilha
+        if(tempoSegundos > 5) {
+          enviarParaGoogle(nomes[i], etiqueta, tempoSegundos);
+        }
+
+        estadoAnterior[i] = leituraAtual;
+        tempoInicio[i] = tempoAgora;
+      }
+    }
+  }
+}
