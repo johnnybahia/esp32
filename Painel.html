@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      body { font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; background-color: #eef2f5; text-align: center; margin: 0; padding: 10px; }
+      h1 { color: #333; font-size: 22px; margin: 20px 0; text-transform: uppercase; letter-spacing: 1px; }
+      .grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; }
+      .card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        width: 100%; max-width: 320px; padding: 20px;
+        display: flex; flex-direction: column; align-items: center;
+      }
+      .card h2 { font-size: 16px; color: #555; margin: 0 0 15px 0; height: 40px; display: flex; align-items: center; text-align: center; }
+      .status-box {
+        padding: 8px 20px; border-radius: 20px; font-weight: bold; font-size: 18px;
+        color: white; margin-bottom: 10px; width: 100%; box-sizing: border-box;
+      }
+      .timer { font-size: 42px; font-weight: bold; color: #2c3e50; font-family: 'Courier New', monospace; margin: 10px 0; }
+      .label { color: #95a5a6; font-size: 12px; text-transform: uppercase; }
+      
+      /* Cores */
+      .rodando { background-color: #28a745; box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3); }
+      .parada { background-color: #dc3545; box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3); }
+      .aguardando { background-color: #6c757d; }
+    </style>
+  </head>
+  <body>
+    <h1>🏭 Monitoramento Fabril</h1>
+    
+    <div id="loading" style="color:#666; margin-top:20px;">Carregando dados...</div>
+    <div class="grid" id="app" style="display:none;"></div>
+
+    <script>
+      const maquinas = [
+        "ESPULADEIRA CHINESA 2 BOCAS",
+        "ESPULADEIRA TORRE 2 BOCAS",
+        "ESPULADEIRA TORRE 4 BOCAS",
+        "ESPULADEIRA LONGO 2 BOCAS"
+      ];
+
+      function carregarDados() {
+        google.script.run
+          .withSuccessHandler(atualizarTela)
+          .withFailureHandler(erro => {
+             document.getElementById('loading').innerText = "Erro de Conexão: " + erro.message;
+          })
+          .buscarUltimosEstados();
+      }
+
+      function atualizarTela(dados) {
+        document.getElementById('loading').style.display = 'none';
+        const container = document.getElementById('app');
+        container.style.display = 'flex';
+        container.innerHTML = ''; 
+
+        if (Object.keys(dados).length === 0) {
+           container.innerHTML = '<p>Aguardando primeiros dados das máquinas...</p>';
+        }
+
+        maquinas.forEach(nome => {
+          const info = dados[nome];
+          let estadoReal = "AGUARDANDO";
+          let classeCss = "aguardando";
+          let tempoFormatado = "--:--:--";
+          
+          if (info) {
+             // LÓGICA REVERSA: Se o último registro foi PARADA, agora está RODANDO.
+             if (info.ultimoEvento === "TEMPO PARADA") {
+               estadoReal = "RODANDO";
+               classeCss = "rodando";
+             } else if (info.ultimoEvento === "TEMPO PRODUZINDO") {
+               estadoReal = "PARADA";
+               classeCss = "parada";
+             }
+
+             // Cálculo do Tempo (Agora - Timestamp da Planilha)
+             const agora = new Date().getTime();
+             const diffSegundos = Math.floor((agora - info.timestamp) / 1000);
+             
+             if (diffSegundos >= 0) {
+               const dateObj = new Date(diffSegundos * 1000);
+               tempoFormatado = dateObj.toISOString().substr(11, 8);
+             }
+          }
+
+          const html = `
+            <div class="card">
+              <h2>${nome}</h2>
+              <div class="status-box ${classeCss}">${estadoReal}</div>
+              <div class="timer">${tempoFormatado}</div>
+              <div class="label">Tempo neste estado</div>
+            </div>
+          `;
+          container.innerHTML += html;
+        });
+      }
+
+      setInterval(carregarDados, 5000); // Atualiza a cada 5s
+      carregarDados(); // Roda a primeira vez
+    </script>
+  </body>
+</html>
